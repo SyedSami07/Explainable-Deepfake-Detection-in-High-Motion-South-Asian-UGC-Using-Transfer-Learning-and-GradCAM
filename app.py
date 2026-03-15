@@ -25,25 +25,22 @@ st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_al
 
 @st.cache_resource
 def load_and_fix_model():
-  
-    model_path = "models/MobileNetV2_best.h5" 
+    # Get the absolute path to the directory where app.py lives
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Join it with the models folder and filename
+    model_path = os.path.join(current_dir, "models", "MobileNetV2_best.h5")
     
     if os.path.exists(model_path):
         try:
-            
             orig_model = tf.keras.models.load_model(model_path, compile=False)
-            
-            
-            inputs = tf.keras.Input(shape=(224, 224, 3))
-            outputs = orig_model(inputs)
-            new_model = tf.keras.Model(inputs, outputs)
-            
+            # ... rest of your code ...
             return new_model, orig_model
         except Exception as e:
             st.error(f"Error loading model: {e}")
             return None, None
     else:
-        st.error(f"Model file not found at {model_path}")
+        # This will help you see exactly where the app is looking
+        st.error(f"File not found. Searched at: {model_path}")
         return None, None
 
 model, original_loaded_model = load_and_fix_model()
