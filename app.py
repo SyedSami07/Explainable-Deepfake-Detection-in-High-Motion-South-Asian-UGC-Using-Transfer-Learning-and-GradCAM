@@ -24,15 +24,26 @@ st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_al
 @st.cache_resource
 def load_and_fix_model():
     current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Priority: .keras then .h5
     model_path = os.path.join(current_dir, "models", "MobileNetV2_best.keras")
-    
     if not os.path.exists(model_path):
         model_path = os.path.join(current_dir, "models", "MobileNetV2_best.h5")
 
     if os.path.exists(model_path):
         try:
-            orig_model = tf.keras.models.load_model(model_path, compile=False)
+            # Compatibility fix for 'batch_shape' error between Keras 2 and 3
+            def fixed_input_layer(**kwargs):
+                if 'batch_shape' in kwargs:
+                    kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
+                return tf.keras.layers.InputLayer(**kwargs)
+
+            orig_model = tf.keras.models.load_model(
+                model_path, 
+                compile=False,
+                custom_objects={'InputLayer': fixed_input_layer}
+            )
             
+            # Reconstruct model structure
             base_net = None
             for layer in orig_model.layers:
                 if 'mobilenet' in layer.name.lower():
@@ -51,7 +62,7 @@ def load_and_fix_model():
             st.error(f"Error loading model: {e}")
             return None, None
     else:
-        st.error(f"Model file not found. Please ensure MobileNetV2_best.keras or .h5 is in the models/ folder.")
+        st.error(f"Model file not found. Searched at: {model_path}")
         return None, None
 
 model, original_loaded_model = load_and_fix_model()
@@ -151,6 +162,7 @@ if uploaded_file is not None:
                         super_img = np.clip(jet_heatmap * 0.4 + (img_resized / 255.0), 0, 1)
 
                         plt.imsave("orig.png", img_resized)
+                        # Ensure correct format for fpdf
                         plt.imsave("heat.png", (super_img * 255).astype(np.uint8))
 
                         st.divider()
@@ -160,8 +172,11 @@ if uploaded_file is not None:
                         
                         st.subheader(f"Verdict: {label} ({confidence:.2f}%)")
                         
-                        pdf_data = create_pdf(label, confidence, uploaded_file.name, "orig.png", "heat.png")
-                        st.download_button("📥 Download Report", pdf_data, "Forensic_Report.pdf", "application/pdf")
+                        try:
+                            pdf_data = create_pdf(label, confidence, uploaded_file.name, "orig.png", "heat.png")
+                            st.download_button("📥 Download Report", pdf_data, "Forensic_Report.pdf", "application/pdf")
+                        except Exception as pdf_err:
+                            st.error(f"PDF Generation failed: {pdf_err}")
                     else:
                         st.warning("Heatmap failed. Displaying Verdict only.")
                         st.subheader(f"Verdict: {label} ({confidence:.2f}%)")
