@@ -1,7 +1,7 @@
-streamlit
-tensorflow-cpu==2.15.0
+tensorflow==2.15.0
+streamlit>=1.32.2
 opencv-python-headless
-numpy
-pillow
+numpy<2
 matplotlib
-scikit-learn
+fpdf
+scipy
