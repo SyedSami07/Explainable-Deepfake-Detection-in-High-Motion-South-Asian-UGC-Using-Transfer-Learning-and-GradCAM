@@ -12,74 +12,110 @@ st.set_page_config(page_title="Deepfake Detector XAI", layout="wide")
 st.title("🔍 Deepfake Detection with XAI")
 st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_allow_html=True)
 
-def build_model_from_scratch():
-    """Build MobileNetV2 model fresh, then load weights from .keras file."""
+def get_model_path():
     base_path = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_path, "MobileNetV2_best.keras")
-    if not os.path.exists(model_path):
-        model_path = os.path.join(base_path, "models", "MobileNetV2_best.keras")
-    if not os.path.exists(model_path):
-        return None, "Model file not found."
+    for p in [os.path.join(base_path, "MobileNetV2_best.keras"),
+               os.path.join(base_path, "models", "MobileNetV2_best.keras")]:
+        if os.path.exists(p):
+            return p
+    return None
+
+def inspect_keras_zip(model_path):
+    """Peek inside the .keras zip to find Dense layer shapes."""
+    dense_units = []
+    try:
+        with zipfile.ZipFile(model_path, 'r') as zf:
+            if 'config.json' in zf.namelist():
+                config = json.loads(zf.read('config.json'))
+                config_str = json.dumps(config)
+                # Find all Dense layer unit counts from config
+                def find_dense(obj):
+                    if isinstance(obj, dict):
+                        if obj.get('class_name') == 'Dense':
+                            units = obj.get('config', {}).get('units')
+                            if units:
+                                dense_units.append(units)
+                        for v in obj.values():
+                            find_dense(v)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            find_dense(item)
+                find_dense(config)
+    except Exception as e:
+        st.warning(f"Could not inspect config: {e}")
+    return dense_units
+
+@st.cache_resource
+def load_forensic_model():
+    model_path = get_model_path()
+    if not model_path:
+        st.error("Model file not found.")
+        return None
+
+    # Inspect what Dense layers exist in the saved model
+    dense_units = inspect_keras_zip(model_path)
+    st.info(f"Detected Dense layers in saved model: {dense_units}")
 
     try:
-        # Build a clean MobileNetV2 model from scratch
+        # Build MobileNetV2 backbone
         base = tf.keras.applications.MobileNetV2(
             input_shape=(224, 224, 3),
             include_top=False,
             weights=None
         )
+
         inputs = tf.keras.Input(shape=(224, 224, 3))
         x = base(inputs, training=False)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
-        model = tf.keras.Model(inputs, outputs)
 
-        # Extract weights from the .keras zip file and load them
+        # Dynamically add Dense layers matching the saved model
+        # Last unit is always the output (sigmoid), rest are hidden (relu)
+        if len(dense_units) >= 2:
+            for units in dense_units[:-1]:
+                x = tf.keras.layers.Dense(units, activation='relu')(x)
+            x = tf.keras.layers.Dense(dense_units[-1], activation='sigmoid')(x)
+        elif len(dense_units) == 1:
+            x = tf.keras.layers.Dense(dense_units[0], activation='sigmoid')(x)
+        else:
+            # Fallback: assume Dense(256) -> Dense(1) based on shape error
+            x = tf.keras.layers.Dense(256, activation='relu')(x)
+            x = tf.keras.layers.Dense(1, activation='sigmoid')(x)
+
+        model = tf.keras.Model(inputs, x)
+
+        # Load weights from inside the .keras zip
         with tempfile.TemporaryDirectory() as tmpdir:
             with zipfile.ZipFile(model_path, 'r') as zf:
                 zf.extractall(tmpdir)
 
-            # Try loading weights directly
-            weights_path = os.path.join(tmpdir, "model.weights.h5")
-            if not os.path.exists(weights_path):
-                # Fallback: look for any .h5 or .weights file
-                for fname in os.listdir(tmpdir):
-                    if fname.endswith('.h5') or 'weight' in fname.lower():
-                        weights_path = os.path.join(tmpdir, fname)
-                        break
+            weights_path = None
+            for fname in os.listdir(tmpdir):
+                if fname.endswith('.h5') or 'weight' in fname.lower():
+                    weights_path = os.path.join(tmpdir, fname)
+                    break
 
-            if os.path.exists(weights_path):
+            if weights_path and os.path.exists(weights_path):
                 model.load_weights(weights_path, by_name=True, skip_mismatch=True)
-                return model, None
+                st.success("Weights loaded successfully.")
             else:
-                # List what's actually in the zip for debugging
                 files = os.listdir(tmpdir)
-                return model, f"No weights file found. Zip contains: {files}"
+                st.warning(f"No weights file found. Contents: {files}")
+
+        return model
 
     except Exception as e:
-        return None, str(e)
-
-@st.cache_resource
-def load_forensic_model():
-    model, err = build_model_from_scratch()
-    if err:
-        st.warning(f"Weight loading issue: {err} — model may have random weights.")
-    if model is None:
-        st.error("Failed to build model.")
-    return model
+        st.error(f"Model build failed: {e}")
+        return None
 
 
 def get_gradcam_heatmap(img_array, model):
     try:
-        # Get MobileNetV2 base from within the model
-        base = model.layers[1]  # the MobileNetV2 base
+        base = model.layers[1]  # MobileNetV2 base
         last_conv = base.get_layer("out_relu")
-
         grad_model = tf.keras.Model(
             inputs=base.input,
             outputs=[last_conv.output, base.output]
         )
-
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(img_array)
             if isinstance(predictions, (list, tuple)):
@@ -141,7 +177,8 @@ if uploaded_file is not None:
                     if heatmap is not None:
                         heatmap_resized = cv2.resize(heatmap, (224, 224))
                         heatmap_uint8 = np.uint8(255 * heatmap_resized)
-                        jet_heatmap = cm.get_cmap("jet")(np.arange(256))[:, :3][heatmap_uint8]
+                        # Fixed: use colormaps instead of deprecated get_cmap
+                        jet_heatmap = matplotlib.colormaps["jet"](np.arange(256))[:, :3][heatmap_uint8]
                         super_img = np.clip(jet_heatmap * 0.4 + img_resized / 255.0, 0, 1)
                         col1, col2 = st.columns(2)
                         col1.image(img_resized, caption="Extracted Frame")
