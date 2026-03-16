@@ -25,7 +25,6 @@ st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_al
 
 # --- Compatibility Fix for Keras 2/3 ---
 class CompatibleInputLayer(InputLayer):
-    """Interacts with Keras deserialization to fix the batch_shape vs batch_input_shape error."""
     def __init__(self, *args, **kwargs):
         if 'batch_shape' in kwargs:
             kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
@@ -37,93 +36,67 @@ def load_forensic_model():
     base_path = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(base_path, "MobileNetV2_best.keras")
     
-    # Check if file exists
     if not os.path.exists(model_path):
-        # Backup check in 'models' folder
         model_path = os.path.join(base_path, "models", "MobileNetV2_best.keras")
 
     if os.path.exists(model_path):
         try:
-            # Load with custom mapping to handle the InputLayer error
-            orig_model = tf.keras.models.load_model(
+            # Load the model exactly as it was saved
+            loaded_model = tf.keras.models.load_model(
                 model_path, 
                 compile=False,
                 custom_objects={'InputLayer': CompatibleInputLayer}
             )
             
-            # Reconstruct model for the specific classification task
-            base_net = None
-            for layer in orig_model.layers:
-                if 'mobilenet' in layer.name.lower():
-                    base_net = layer
-                    break
-            
-            if not base_net:
-                base_net = orig_model.layers[0]
-                
-            new_model = tf.keras.Sequential([
-                base_net,
-                tf.keras.layers.GlobalAveragePooling2D(),
-                tf.keras.layers.Dense(1, activation='sigmoid')
-            ])
-            return new_model, orig_model
+            # Instead of Sequential, we use the loaded model directly to avoid "Input Tensor" errors
+            return loaded_model
         except Exception as e:
             st.error(f"Initialization Error: {e}")
-            return None, None
+            return None
     else:
-        st.error("MobileNetV2_best.keras not found. Please ensure it's in the root folder.")
-        return None, None
+        st.error("Model file not found.")
+        return None
 
-model, original_loaded_model = load_forensic_model()
+model = load_forensic_model()
 
 # --- XAI Engine ---
-def get_gradcam_heatmap(img_array, raw_model, last_conv_layer_name="out_relu"):
+def get_gradcam_heatmap(img_array, raw_model):
     try:
-        base_net = None
+        # For MobileNetV2, the last conv layer is usually 'out_relu'
+        # We search the layers to find the correct internal layer
+        last_conv_layer = None
         for layer in raw_model.layers:
-            if 'mobilenet' in layer.name.lower():
-                base_net = layer
+            if isinstance(layer, tf.keras.Model): # If it's a nested MobileNet
+                for inner_layer in layer.layers:
+                    if "out_relu" in inner_layer.name:
+                        last_conv_layer = inner_layer
+                        base_model = layer
+                        break
+            elif "out_relu" in layer.name:
+                last_conv_layer = layer
+                base_model = raw_model
                 break
-        
-        if not base_net:
-            base_net = raw_model.layers[0]
 
-        # Define model to output last conv layer and prediction
-        inner_grad_model = tf.keras.Model(
-            inputs=[base_net.input],
-            outputs=[base_net.get_layer(last_conv_layer_name).output, base_net.output]
+        grad_model = tf.keras.Model(
+            inputs=[base_model.input],
+            outputs=[last_conv_layer.output, base_model.output]
         )
 
         with tf.GradientTape() as tape:
-            img_tensor = tf.cast(img_array, tf.float32)
-            conv_outputs, predictions = inner_grad_model(img_tensor)
+            conv_outputs, predictions = grad_model(img_array)
+            # Handle if predictions are nested
+            if isinstance(predictions, list): predictions = predictions[0]
             loss = predictions[:, 0]
 
         grads = tape.gradient(loss, conv_outputs)
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        
-        conv_outputs = conv_outputs[0]
-        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+        heatmap = conv_outputs[0] @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
         heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)
         return heatmap.numpy()
-    except:
+    except Exception as e:
+        # st.write(f"XAI Debug: {e}") # Uncomment to see Grad-CAM errors
         return None
-
-# --- PDF Reporting ---
-def create_pdf(label, confidence, video_name, orig_path, heat_path):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 18)
-    pdf.cell(200, 15, txt="Forensic Analysis Report", ln=True, align='C')
-    pdf.ln(10)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, txt=f"File: {video_name}", ln=True)
-    pdf.cell(0, 10, txt=f"Verdict: {label} ({confidence:.2f}%)", ln=True)
-    pdf.ln(10)
-    pdf.image(orig_path, x=15, y=70, w=85)
-    pdf.image(heat_path, x=110, y=70, w=85)
-    return pdf.output(dest='S').encode('latin-1')
 
 # --- Main App Logic ---
 uploaded_file = st.sidebar.file_uploader("Upload Video", type=["mp4", "avi", "mov"])
@@ -145,40 +118,33 @@ if uploaded_file is not None:
                 cap.release()
 
                 if ret:
-                    # Preprocess frame
                     img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     img_resized = cv2.resize(img_rgb, (224, 224))
                     img_array = np.expand_dims(img_resized, axis=0).astype('float32') / 255.0
 
-                    # Run Model
-                    prediction = model.predict(img_array, verbose=0)[0][0]
+                    # Run Model directly
+                    preds = model.predict(img_array, verbose=0)
+                    # Handle different output shapes [1, 1] vs [1]
+                    prediction = preds[0][0] if len(preds.shape) > 1 else preds[0]
+                    
                     label = "AI (Deepfake)" if prediction < 0.5 else "Real Video"
                     confidence = (1 - prediction) * 100 if prediction < 0.5 else prediction * 100
 
-                    # XAI Logic
-                    heatmap = get_gradcam_heatmap(img_array, original_loaded_model)
+                    heatmap = get_gradcam_heatmap(img_array, model)
 
+                    st.divider()
+                    st.subheader(f"Result: {label} ({confidence:.2f}%)")
+                    
+                    c1, c2 = st.columns(2)
+                    c1.image(img_resized, caption="Analyzed Frame")
                     if heatmap is not None:
                         heatmap_resized = cv2.resize(heatmap, (224, 224))
                         heatmap_uint8 = np.uint8(255 * heatmap_resized)
                         color_map = cm.get_cmap("jet")
                         jet_heatmap = color_map(np.arange(256))[:, :3][heatmap_uint8]
                         super_img = np.clip(jet_heatmap * 0.4 + (img_resized / 255.0), 0, 1)
-
-                        # Save intermediate images for PDF
-                        plt.imsave("orig.png", img_resized)
-                        plt.imsave("heat.png", (super_img * 255).astype(np.uint8))
-
-                        # UI Display
-                        st.divider()
-                        st.subheader(f"Result: {label} ({confidence:.2f}%)")
-                        c1, c2 = st.columns(2)
-                        c1.image(img_resized, caption="Analyzed Frame")
                         c2.image(super_img, caption="Grad-CAM XAI Map")
-                        
-                        pdf_data = create_pdf(label, confidence, uploaded_file.name, "orig.png", "heat.png")
-                        st.download_button("📥 Download Report", pdf_data, "Report.pdf", "application/pdf")
                 else:
                     st.error("Failed to extract video frame.")
         else:
-            st.error("Model state is None. Please check logs.")
+            st.error("Model not initialized correctly.")
