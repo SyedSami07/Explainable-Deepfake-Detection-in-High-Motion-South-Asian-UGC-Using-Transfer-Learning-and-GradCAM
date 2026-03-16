@@ -25,18 +25,28 @@ st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_al
 @st.cache_resource
 def load_and_fix_model():
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Check for both formats
+    # Try the .keras format first as it is more robust
     model_path = os.path.join(current_dir, "models", "MobileNetV2_best.keras")
-    if not os.path.exists(model_path):
-        model_path = os.path.join(current_dir, "models", "MobileNetV2_best.h5")
-
+    
     if os.path.exists(model_path):
         try:
-            # INTERCEPTOR: Renames batch_shape to batch_input_shape for older Keras versions
-            def fixed_input_layer(**kwargs):
-                if 'batch_shape' in kwargs:
-                    kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
-                return tf.keras.layers.InputLayer(**kwargs)
+            # Load the model - using compile=False is safer for deployment
+            orig_model = tf.keras.models.load_model(model_path, compile=False)
+            
+            # Rebuild the top layer to ensure it matches your specific 1-class output
+            base_net = orig_model.layers[0] 
+            new_model = tf.keras.Sequential([
+                base_net,
+                tf.keras.layers.GlobalAveragePooling2D(),
+                tf.keras.layers.Dense(1, activation='sigmoid')
+            ])
+            return new_model, orig_model
+        except Exception as e:
+            st.error(f"Error loading model: {e}")
+            return None, None
+    else:
+        st.error(f"Model file not found at: {model_path}")
+        return None, None
 
             # Load using the custom object mapping
             orig_model = tf.keras.models.load_model(
