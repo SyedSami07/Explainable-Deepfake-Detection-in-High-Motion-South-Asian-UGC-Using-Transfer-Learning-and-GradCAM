@@ -25,14 +25,11 @@ st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_al
 def load_and_fix_model():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(current_dir, "models", "MobileNetV2_best.keras")
-    
-    # Fallback to .h5 if .keras isn't found
     if not os.path.exists(model_path):
         model_path = os.path.join(current_dir, "models", "MobileNetV2_best.h5")
 
     if os.path.exists(model_path):
         try:
-            # Compatibility interceptor for batch_shape
             def fixed_input_layer(**kwargs):
                 if 'batch_shape' in kwargs:
                     kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
@@ -40,13 +37,19 @@ def load_and_fix_model():
 
             orig_model = tf.keras.models.load_model(
                 model_path, 
-                compile=False, 
+                compile=False,
                 custom_objects={'InputLayer': fixed_input_layer}
             )
             
             # Reconstruct for classification
-            base_net = orig_model.layers[0] if 'mobilenet' in orig_model.layers[0].name.lower() else orig_model.layers[1]
-            
+            base_net = None
+            for layer in orig_model.layers:
+                if 'mobilenet' in layer.name.lower():
+                    base_net = layer
+                    break
+            if not base_net:
+                base_net = orig_model.layers[0]
+                
             new_model = tf.keras.Sequential([
                 base_net,
                 tf.keras.layers.GlobalAveragePooling2D(),
@@ -82,14 +85,12 @@ def get_gradcam_heatmap(img_array, raw_model, last_conv_layer_name="out_relu"):
 
         grads = tape.gradient(loss, conv_outputs)
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        
         conv_outputs = conv_outputs[0]
         heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
         heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)
         return heatmap.numpy()
     except Exception as e:
-        st.error(f"XAI Detail: {e}")
         return None
 
 def create_pdf(label, confidence, video_name, orig_path, heat_path):
@@ -105,40 +106,44 @@ def create_pdf(label, confidence, video_name, orig_path, heat_path):
     pdf.ln(10)
     pdf.image(orig_path, x=15, y=70, w=85)
     pdf.image(heat_path, x=110, y=70, w=85)
-    pdf.set_y(150)
-    pdf.set_font("Arial", 'I', 10)
-    pdf.multi_cell(0, 10, txt="Note: Heatmaps indicate areas of high interest for the AI model. Red zones suggest spatial artifacts often found in synthetic manipulations.")
     return pdf.output(dest='S').encode('latin-1')
 
+# --- UI LOGIC ---
 uploaded_file = st.sidebar.file_uploader("Upload Video", type=["mp4", "avi", "mov"])
 
 if uploaded_file is not None:
-    with open("temp_video.mp4", "wb") as f:
+    # Save video to a persistent path
+    video_path = os.path.join(os.getcwd(), "temp_video.mp4")
+    with open(video_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
     
-    col_l, col_m, col_r = st.columns([1, 1, 1]) 
+    col_l, col_m, col_r = st.columns([1, 2, 1]) 
     with col_m:
         st.write("### Preview")
-        st.video("temp_video.mp4")
+        st.video(video_path)
         analyze_btn = st.button("Generate Forensic Report")
     
     if analyze_btn:
-        if model:
-            with st.spinner('Analyzing high-motion artifacts...'):
-                cap = cv2.VideoCapture("temp_video.mp4")
+        if model is not None:
+            with st.spinner('Analyzing motion artifacts...'):
+                # 1. Grab Frame
+                cap = cv2.VideoCapture(video_path)
                 cap.set(cv2.CAP_PROP_POS_FRAMES, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) // 2)
                 ret, frame = cap.read()
                 cap.release()
 
                 if ret:
+                    # 2. Process
                     img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     img_resized = cv2.resize(img_rgb, (224, 224))
                     img_array = np.expand_dims(img_resized, axis=0).astype('float32') / 255.0
 
+                    # 3. Predict
                     prediction = model.predict(img_array, verbose=0)[0][0]
                     label = "AI (Deepfake)" if prediction < 0.5 else "Real Video"
                     confidence = (1 - prediction) * 100 if prediction < 0.5 else prediction * 100
 
+                    # 4. Heatmap
                     heatmap = get_gradcam_heatmap(img_array, original_loaded_model)
 
                     if heatmap is not None:
@@ -151,14 +156,17 @@ if uploaded_file is not None:
                         plt.imsave("orig.png", img_resized)
                         plt.imsave("heat.png", (super_img * 255).astype(np.uint8))
 
+                        # 5. Show Results
                         st.divider()
+                        st.subheader(f"Verdict: {label} ({confidence:.2f}%)")
+                        
                         c1, c2 = st.columns(2)
                         with c1: st.image(img_resized, caption="Extracted Frame")
                         with c2: st.image(super_img, caption="Grad-CAM XAI Heatmap")
-                        st.subheader(f"Verdict: {label} ({confidence:.2f}%)")
                         
                         pdf_data = create_pdf(label, confidence, uploaded_file.name, "orig.png", "heat.png")
                         st.download_button("📥 Download Report", pdf_data, "Forensic_Report.pdf", "application/pdf")
-                    else:
-                        st.warning("Heatmap failed. Displaying Verdict only.")
-                        st.subheader(f"Verdict: {label} ({confidence:.2f}%)")
+                else:
+                    st.error("Error: Could not read the video file.")
+        else:
+            st.error("Model not loaded. Check logs.")
