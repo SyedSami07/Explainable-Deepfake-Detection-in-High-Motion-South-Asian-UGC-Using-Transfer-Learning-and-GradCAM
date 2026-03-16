@@ -4,96 +4,80 @@ import cv2
 import numpy as np
 import matplotlib.cm as cm
 import os
+import zipfile
+import json
+import tempfile
 
 st.set_page_config(page_title="Deepfake Detector XAI", layout="wide")
 st.title("🔍 Deepfake Detection with XAI")
 st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_allow_html=True)
 
-# ── Patch InputLayer to accept legacy 'batch_shape' keyword ──────────────────
-class LegacyInputLayer(tf.keras.layers.InputLayer):
-    def __init__(self, **kwargs):
-        if 'batch_shape' in kwargs:
-            kwargs['input_shape'] = kwargs.pop('batch_shape')[1:]  # strip batch dim
-        super().__init__(**kwargs)
-
-    @classmethod
-    def from_config(cls, config):
-        if 'batch_shape' in config:
-            config['input_shape'] = config.pop('batch_shape')[1:]
-        return cls(**config)
-
-@st.cache_resource
-def load_forensic_model():
+def build_model_from_scratch():
+    """Build MobileNetV2 model fresh, then load weights from .keras file."""
     base_path = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(base_path, "MobileNetV2_best.keras")
     if not os.path.exists(model_path):
         model_path = os.path.join(base_path, "models", "MobileNetV2_best.keras")
     if not os.path.exists(model_path):
-        st.error("Model file not found.")
-        return None
+        return None, "Model file not found."
 
     try:
-        raw = tf.keras.models.load_model(
-            model_path,
-            compile=False,
-            custom_objects={'InputLayer': LegacyInputLayer}
+        # Build a clean MobileNetV2 model from scratch
+        base = tf.keras.applications.MobileNetV2(
+            input_shape=(224, 224, 3),
+            include_top=False,
+            weights=None
         )
-
-        # Find MobileNetV2 backbone
-        backbone = None
-        for layer in raw.layers:
-            if 'mobilenet' in layer.name.lower():
-                backbone = layer
-                break
-        if backbone is None:
-            st.error("MobileNetV2 backbone not found.")
-            return None
-
-        # Build clean functional model — handles dual-tensor backbone output
         inputs = tf.keras.Input(shape=(224, 224, 3))
-        backbone_out = backbone(inputs, training=False)
-
-        if isinstance(backbone_out, (list, tuple)):
-            x = tf.keras.layers.Average()(list(backbone_out))
-        else:
-            x = backbone_out
-
-        if len(x.shape) == 4:
-            x = tf.keras.layers.GlobalAveragePooling2D()(x)
-
+        x = base(inputs, training=False)
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
-        model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        model = tf.keras.Model(inputs, outputs)
 
-        # Copy Dense weights from original model
-        for layer in reversed(raw.layers):
-            if isinstance(layer, tf.keras.layers.Dense):
-                try:
-                    model.layers[-1].set_weights(layer.get_weights())
-                    break
-                except Exception:
-                    pass
+        # Extract weights from the .keras zip file and load them
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with zipfile.ZipFile(model_path, 'r') as zf:
+                zf.extractall(tmpdir)
 
-        return model
+            # Try loading weights directly
+            weights_path = os.path.join(tmpdir, "model.weights.h5")
+            if not os.path.exists(weights_path):
+                # Fallback: look for any .h5 or .weights file
+                for fname in os.listdir(tmpdir):
+                    if fname.endswith('.h5') or 'weight' in fname.lower():
+                        weights_path = os.path.join(tmpdir, fname)
+                        break
+
+            if os.path.exists(weights_path):
+                model.load_weights(weights_path, by_name=True, skip_mismatch=True)
+                return model, None
+            else:
+                # List what's actually in the zip for debugging
+                files = os.listdir(tmpdir)
+                return model, f"No weights file found. Zip contains: {files}"
 
     except Exception as e:
-        st.error(f"Model load failed: {e}")
-        return None
+        return None, str(e)
+
+@st.cache_resource
+def load_forensic_model():
+    model, err = build_model_from_scratch()
+    if err:
+        st.warning(f"Weight loading issue: {err} — model may have random weights.")
+    if model is None:
+        st.error("Failed to build model.")
+    return model
 
 
 def get_gradcam_heatmap(img_array, model):
     try:
-        backbone = None
-        for layer in model.layers:
-            if 'mobilenet' in layer.name.lower():
-                backbone = layer
-                break
-        if backbone is None:
-            return None
+        # Get MobileNetV2 base from within the model
+        base = model.layers[1]  # the MobileNetV2 base
+        last_conv = base.get_layer("out_relu")
 
-        last_conv = backbone.get_layer("out_relu")
         grad_model = tf.keras.Model(
-            inputs=backbone.input,
-            outputs=[last_conv.output, backbone.output]
+            inputs=base.input,
+            outputs=[last_conv.output, base.output]
         )
 
         with tf.GradientTape() as tape:
@@ -164,4 +148,3 @@ if uploaded_file is not None:
                         col2.image(super_img, caption="Grad-CAM XAI Map")
                     else:
                         st.image(img_resized, caption="Extracted Frame (Grad-CAM unavailable)")
-
