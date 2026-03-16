@@ -7,7 +7,7 @@ import matplotlib.cm as cm
 import os
 from fpdf import FPDF
 from datetime import datetime
-from tensorflow.keras.layers import InputLayer
+from tensorflow.keras.layers import InputLayer, GlobalAveragePooling2D, Dense, Concatenate
 
 st.set_page_config(page_title="Deepfake Detector XAI", layout="wide")
 
@@ -28,74 +28,69 @@ def load_forensic_model():
     if not os.path.exists(model_path):
         model_path = os.path.join(base_path, "models", "MobileNetV2_best.keras")
 
-    if not os.path.exists(model_path):
-        st.error("Model file not found.")
-        return None
-
     try:
-        # 1. Load the model as-is
         raw = tf.keras.models.load_model(
             model_path, 
             compile=False,
             custom_objects={'InputLayer': CompatibleInputLayer}
         )
         
-        # 2. Extract the actual functional layers
-        # This part handles the "2 input tensors" by manually routing through the backbone
-        inputs = tf.keras.Input(shape=(224, 224, 3))
-        
-        # Find the MobileNetV2 block
+        # FIND BACKBONE
         backbone = None
         for layer in raw.layers:
             if 'mobilenet' in layer.name.lower():
                 backbone = layer
                 break
-        
-        if backbone is not None:
-            # Manually call the backbone on our new input
-            x = backbone(inputs)
-            # If the backbone returns a list (the cause of your error), grab index 0
-            if isinstance(x, (list, tuple)):
-                x = x[0]
-            
-            # 3. Add pooling and the classification head manually
-            x = tf.keras.layers.GlobalAveragePooling2D()(x)
-            outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
-            
-            fixed_model = tf.keras.Model(inputs, outputs)
-            
-            # 4. Copy weights for the final dense layer from the old model
-            for layer in reversed(raw.layers):
-                if 'dense' in layer.name.lower():
-                    fixed_model.layers[-1].set_weights(layer.get_weights())
-                    break
-            return fixed_model
-        else:
-            # If no backbone found, return raw and hope for the best
-            return raw
+        if not backbone: backbone = raw.layers[0]
 
+        # BUILD CLEAN GRAPH
+        inputs = tf.keras.Input(shape=(224, 224, 3))
+        x = backbone(inputs)
+
+        # HANDLE THE "2 TENSORS" ERROR
+        # If x is a list of two identical tensors, we merge them or take one
+        if isinstance(x, list):
+            if len(x) > 1:
+                # Take the average or just the first to satisfy the Dense layer
+                x = tf.keras.layers.Average()([x[0], x[1]])
+            else:
+                x = x[0]
+        
+        # Ensure spatial data is pooled to 1D
+        if len(x.shape) > 2:
+            x = GlobalAveragePooling2D()(x)
+        
+        outputs = Dense(1, activation='sigmoid')(x)
+        fixed_model = tf.keras.Model(inputs, outputs)
+
+        # COPY WEIGHTS FOR THE FINAL LAYER
+        for layer in reversed(raw.layers):
+            if 'dense' in layer.name.lower():
+                fixed_model.layers[-1].set_weights(layer.get_weights())
+                break
+        
+        return fixed_model
     except Exception as e:
-        st.error(f"Architecture Repair Failed: {e}")
+        st.error(f"Critical Architecture Fix Failed: {e}")
         return None
 
 model = load_forensic_model()
 
-# --- XAI Heatmap (Grad-CAM) ---
+# --- Grad-CAM XAI Logic ---
 def get_gradcam_heatmap(img_array, full_model):
     try:
-        # In our fixed model, layers[1] is the MobileNet backbone
+        # Layer 1 is the backbone in our fixed model
         backbone = full_model.layers[1]
-        last_conv_layer = backbone.get_layer("out_relu")
+        last_conv = backbone.get_layer("out_relu")
         
         grad_model = tf.keras.Model(
             inputs=[backbone.input],
-            outputs=[last_conv_layer.output, backbone.output]
+            outputs=[last_conv.output, backbone.output]
         )
 
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(img_array)
-            if isinstance(predictions, (list, tuple)): 
-                predictions = predictions[0]
+            if isinstance(predictions, list): predictions = predictions[0]
             loss = predictions[:, 0]
 
         grads = tape.gradient(loss, conv_outputs)
@@ -107,7 +102,7 @@ def get_gradcam_heatmap(img_array, full_model):
     except:
         return None
 
-# --- Main Logic ---
+# --- UI LOGIC ---
 uploaded_file = st.sidebar.file_uploader("Upload Video", type=["mp4", "avi", "mov"])
 
 if uploaded_file is not None:
@@ -119,7 +114,7 @@ if uploaded_file is not None:
     
     if st.button("Generate Forensic Report", type="primary"):
         if model:
-            with st.spinner('Analyzing Frame...'):
+            with st.spinner('Analyzing...'):
                 cap = cv2.VideoCapture(temp_path)
                 cap.set(cv2.CAP_PROP_POS_FRAMES, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) // 2)
                 ret, frame = cap.read()
@@ -151,4 +146,4 @@ if uploaded_file is not None:
                         c1.image(img_resized, caption="Extracted Frame")
                         c2.image(super_img, caption="Grad-CAM XAI Map")
                 else:
-                    st.error("Error extracting frame.")
+                    st.error("Frame extraction failed.")
