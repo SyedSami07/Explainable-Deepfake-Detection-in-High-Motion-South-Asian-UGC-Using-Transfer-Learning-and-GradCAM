@@ -8,7 +8,7 @@ import zipfile
 import tempfile
 
 st.set_page_config(
-    page_title="DeepShield — Deepfake Detection",
+    page_title="DeepMotion — South Asian Deepfake Detection",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -277,7 +277,7 @@ st.markdown("""
     -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
     margin-bottom:16px;animation:fadeDown 0.7s 0.1s ease both;
     opacity:0;animation-fill-mode:both;
-  ">DeepShield</div>
+  ">DeepMotion</div>
   <div style="font-family:'Space Mono',monospace;font-size:11px;
       color:rgba(180,165,220,0.45);letter-spacing:2px;
       animation:fadeDown 0.7s 0.2s ease both;opacity:0;animation-fill-mode:both;">
@@ -509,6 +509,6 @@ st.markdown("""
 <div style="text-align:center;padding:24px 0 20px;
     font-family:'Space Mono',monospace;font-size:10px;
     color:rgba(90,70,150,0.22);letter-spacing:3px;">
-  DEEPSHIELD &nbsp;·&nbsp; BY SAMI
+  DeepMotion &nbsp;·&nbsp; BY SAMI
 </div>
 """, unsafe_allow_html=True)
