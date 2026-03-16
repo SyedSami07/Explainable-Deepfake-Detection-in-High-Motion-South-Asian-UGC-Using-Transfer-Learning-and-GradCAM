@@ -7,8 +7,9 @@ import matplotlib.cm as cm
 import os
 from fpdf import FPDF
 from datetime import datetime
+from tensorflow.keras.layers import InputLayer
 
-# --- Page Config ---
+# --- Page Configuration ---
 st.set_page_config(page_title="Deepfake Detector XAI", layout="wide")
 
 st.markdown("""
@@ -22,38 +23,41 @@ st.markdown("""
 st.title("🔍 Deepfake Detection with XAI")
 st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_allow_html=True)
 
-# --- Model Loading Logic ---
+# --- Compatibility Fix for Keras 2/3 ---
+class CompatibleInputLayer(InputLayer):
+    """Interacts with Keras deserialization to fix the batch_shape vs batch_input_shape error."""
+    def __init__(self, *args, **kwargs):
+        if 'batch_shape' in kwargs:
+            kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
+        super().__init__(*args, **kwargs)
+
+# --- Model Loading ---
 @st.cache_resource
 def load_forensic_model():
     base_path = os.path.dirname(os.path.abspath(__file__))
-    
-    # Based on your screenshot, the file is in the ROOT directory
     model_path = os.path.join(base_path, "MobileNetV2_best.keras")
     
-    # Fallback to 'models' folder just in case
+    # Check if file exists
     if not os.path.exists(model_path):
+        # Backup check in 'models' folder
         model_path = os.path.join(base_path, "models", "MobileNetV2_best.keras")
 
     if os.path.exists(model_path):
         try:
-            # INTERCEPTOR: Renames batch_shape to batch_input_shape for older Keras versions
-            def fixed_input_layer(**kwargs):
-                if 'batch_shape' in kwargs:
-                    kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
-                return tf.keras.layers.InputLayer(**kwargs)
-
+            # Load with custom mapping to handle the InputLayer error
             orig_model = tf.keras.models.load_model(
                 model_path, 
                 compile=False,
-                custom_objects={'InputLayer': fixed_input_layer}
+                custom_objects={'InputLayer': CompatibleInputLayer}
             )
             
-            # Reconstruct model structure
+            # Reconstruct model for the specific classification task
             base_net = None
             for layer in orig_model.layers:
                 if 'mobilenet' in layer.name.lower():
                     base_net = layer
                     break
+            
             if not base_net:
                 base_net = orig_model.layers[0]
                 
@@ -64,16 +68,15 @@ def load_forensic_model():
             ])
             return new_model, orig_model
         except Exception as e:
-            st.error(f"Error loading model bytes: {e}")
+            st.error(f"Initialization Error: {e}")
             return None, None
     else:
-        st.error(f"Model file not found at: {model_path}")
+        st.error("MobileNetV2_best.keras not found. Please ensure it's in the root folder.")
         return None, None
 
-# Initialize Model
 model, original_loaded_model = load_forensic_model()
 
-# --- XAI Heatmap Function ---
+# --- XAI Engine ---
 def get_gradcam_heatmap(img_array, raw_model, last_conv_layer_name="out_relu"):
     try:
         base_net = None
@@ -85,6 +88,7 @@ def get_gradcam_heatmap(img_array, raw_model, last_conv_layer_name="out_relu"):
         if not base_net:
             base_net = raw_model.layers[0]
 
+        # Define model to output last conv layer and prediction
         inner_grad_model = tf.keras.Model(
             inputs=[base_net.input],
             outputs=[base_net.get_layer(last_conv_layer_name).output, base_net.output]
@@ -101,96 +105,80 @@ def get_gradcam_heatmap(img_array, raw_model, last_conv_layer_name="out_relu"):
         conv_outputs = conv_outputs[0]
         heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
-        
         heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)
         return heatmap.numpy()
-    except Exception as e:
+    except:
         return None
 
-# --- PDF Generation ---
+# --- PDF Reporting ---
 def create_pdf(label, confidence, video_name, orig_path, heat_path):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 18)
-    pdf.cell(200, 15, txt="Deepfake Forensic Analysis Report", ln=True, align='C')
+    pdf.cell(200, 15, txt="Forensic Analysis Report", ln=True, align='C')
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, txt=f"File Analyzed: {video_name}", ln=True)
-    pdf.cell(0, 10, txt=f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
-    pdf.cell(0, 10, txt=f"Final Verdict: {label} ({confidence:.2f}%)", ln=True)
-    
+    pdf.cell(0, 10, txt=f"File: {video_name}", ln=True)
+    pdf.cell(0, 10, txt=f"Verdict: {label} ({confidence:.2f}%)", ln=True)
     pdf.ln(10)
     pdf.image(orig_path, x=15, y=70, w=85)
     pdf.image(heat_path, x=110, y=70, w=85)
-    
-    pdf.set_y(150)
-    pdf.set_font("Arial", 'I', 10)
-    pdf.multi_cell(0, 10, txt="Note: This report is generated based on a single frame analysis from high-motion UGC. The heatmap indicates areas where the model detected manipulation artifacts.")
-    
     return pdf.output(dest='S').encode('latin-1')
 
-# --- Main App Interface ---
-uploaded_file = st.sidebar.file_uploader("Upload South Asian UGC Reel", type=["mp4", "avi", "mov"])
+# --- Main App Logic ---
+uploaded_file = st.sidebar.file_uploader("Upload Video", type=["mp4", "avi", "mov"])
 
 if uploaded_file is not None:
-    # Save the file locally
     temp_path = "temp_video.mp4"
     with open(temp_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
     
-    col_l, col_m, col_r = st.columns([1, 2, 1]) 
-    with col_m:
-        st.write("### Video Preview")
-        st.video(temp_path)
-        analyze_btn = st.button("Generate Forensic Report")
+    st.write("### Video Preview")
+    st.video(temp_path)
     
-    if analyze_btn:
+    if st.button("Generate Forensic Report"):
         if model is not None:
-            with st.spinner('Analyzing high-motion artifacts...'):
+            with st.spinner('Scanning for manipulation artifacts...'):
                 cap = cv2.VideoCapture(temp_path)
-                # Analyze middle frame
                 cap.set(cv2.CAP_PROP_POS_FRAMES, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) // 2)
                 ret, frame = cap.read()
                 cap.release()
 
                 if ret:
-                    # Preprocess
+                    # Preprocess frame
                     img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     img_resized = cv2.resize(img_rgb, (224, 224))
                     img_array = np.expand_dims(img_resized, axis=0).astype('float32') / 255.0
 
-                    # Predict
+                    # Run Model
                     prediction = model.predict(img_array, verbose=0)[0][0]
                     label = "AI (Deepfake)" if prediction < 0.5 else "Real Video"
                     confidence = (1 - prediction) * 100 if prediction < 0.5 else prediction * 100
 
-                    # XAI Heatmap
+                    # XAI Logic
                     heatmap = get_gradcam_heatmap(img_array, original_loaded_model)
 
                     if heatmap is not None:
                         heatmap_resized = cv2.resize(heatmap, (224, 224))
                         heatmap_uint8 = np.uint8(255 * heatmap_resized)
-                        
                         color_map = cm.get_cmap("jet")
                         jet_heatmap = color_map(np.arange(256))[:, :3][heatmap_uint8]
                         super_img = np.clip(jet_heatmap * 0.4 + (img_resized / 255.0), 0, 1)
 
-                        # Save for PDF
+                        # Save intermediate images for PDF
                         plt.imsave("orig.png", img_resized)
                         plt.imsave("heat.png", (super_img * 255).astype(np.uint8))
 
-                        # Display UI Results
+                        # UI Display
                         st.divider()
-                        st.subheader(f"Analysis Results: {label}")
-                        st.write(f"**Confidence Level:** {confidence:.2f}%")
-                        
+                        st.subheader(f"Result: {label} ({confidence:.2f}%)")
                         c1, c2 = st.columns(2)
-                        with c1: st.image(img_resized, caption="Analyzed Frame")
-                        with c2: st.image(super_img, caption="Grad-CAM XAI Map")
+                        c1.image(img_resized, caption="Analyzed Frame")
+                        c2.image(super_img, caption="Grad-CAM XAI Map")
                         
                         pdf_data = create_pdf(label, confidence, uploaded_file.name, "orig.png", "heat.png")
-                        st.download_button("📥 Download PDF Report", pdf_data, "Forensic_Report.pdf", "application/pdf")
+                        st.download_button("📥 Download Report", pdf_data, "Report.pdf", "application/pdf")
                 else:
-                    st.error("Could not process video frames.")
+                    st.error("Failed to extract video frame.")
         else:
-            st.error("Model is not loaded. Check the file path in GitHub.")
+            st.error("Model state is None. Please check logs.")
