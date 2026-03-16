@@ -2,6 +2,7 @@ import streamlit as st
 import tensorflow as tf
 import cv2
 import numpy as np
+import matplotlib
 import matplotlib.cm as cm
 import os
 import zipfile
@@ -12,17 +13,23 @@ st.set_page_config(page_title="Deepfake Detector XAI", layout="wide")
 st.title("🔍 Deepfake Detection with XAI")
 st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_allow_html=True)
 
-def build_model_from_scratch():
-    """Build MobileNetV2 model fresh, then load weights from .keras file."""
+def get_model_path():
     base_path = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_path, "MobileNetV2_best.keras")
-    if not os.path.exists(model_path):
-        model_path = os.path.join(base_path, "models", "MobileNetV2_best.keras")
-    if not os.path.exists(model_path):
-        return None, "Model file not found."
+    for p in [os.path.join(base_path, "MobileNetV2_best.keras"),
+              os.path.join(base_path, "models", "MobileNetV2_best.keras")]:
+        if os.path.exists(p):
+            return p
+    return None
+
+@st.cache_resource
+def load_forensic_model():
+    model_path = get_model_path()
+    if not model_path:
+        st.error("Model file not found.")
+        return None
 
     try:
-        # Build a clean MobileNetV2 model from scratch
+        # Build model with exact architecture: MobileNetV2 -> GAP -> Dense(256,relu) -> Dense(1,sigmoid)
         base = tf.keras.applications.MobileNetV2(
             input_shape=(224, 224, 3),
             include_top=False,
@@ -31,55 +38,41 @@ def build_model_from_scratch():
         inputs = tf.keras.Input(shape=(224, 224, 3))
         x = base(inputs, training=False)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        x = tf.keras.layers.Dense(256, activation='relu')(x)
         outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
         model = tf.keras.Model(inputs, outputs)
 
-        # Extract weights from the .keras zip file and load them
+        # Extract and load weights from the .keras zip file
         with tempfile.TemporaryDirectory() as tmpdir:
             with zipfile.ZipFile(model_path, 'r') as zf:
                 zf.extractall(tmpdir)
 
-            # Try loading weights directly
-            weights_path = os.path.join(tmpdir, "model.weights.h5")
-            if not os.path.exists(weights_path):
-                # Fallback: look for any .h5 or .weights file
-                for fname in os.listdir(tmpdir):
-                    if fname.endswith('.h5') or 'weight' in fname.lower():
-                        weights_path = os.path.join(tmpdir, fname)
-                        break
+            weights_path = None
+            for fname in os.listdir(tmpdir):
+                if fname.endswith('.h5') or 'weight' in fname.lower():
+                    weights_path = os.path.join(tmpdir, fname)
+                    break
 
-            if os.path.exists(weights_path):
+            if weights_path:
                 model.load_weights(weights_path, by_name=True, skip_mismatch=True)
-                return model, None
             else:
-                # List what's actually in the zip for debugging
-                files = os.listdir(tmpdir)
-                return model, f"No weights file found. Zip contains: {files}"
+                st.warning(f"No weights file found in zip.")
+
+        return model
 
     except Exception as e:
-        return None, str(e)
-
-@st.cache_resource
-def load_forensic_model():
-    model, err = build_model_from_scratch()
-    if err:
-        st.warning(f"Weight loading issue: {err} — model may have random weights.")
-    if model is None:
-        st.error("Failed to build model.")
-    return model
+        st.error(f"Model build failed: {e}")
+        return None
 
 
 def get_gradcam_heatmap(img_array, model):
     try:
-        # Get MobileNetV2 base from within the model
-        base = model.layers[1]  # the MobileNetV2 base
+        base = model.layers[1]  # MobileNetV2 base
         last_conv = base.get_layer("out_relu")
-
         grad_model = tf.keras.Model(
             inputs=base.input,
             outputs=[last_conv.output, base.output]
         )
-
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(img_array)
             if isinstance(predictions, (list, tuple)):
@@ -141,7 +134,7 @@ if uploaded_file is not None:
                     if heatmap is not None:
                         heatmap_resized = cv2.resize(heatmap, (224, 224))
                         heatmap_uint8 = np.uint8(255 * heatmap_resized)
-                        jet_heatmap = cm.get_cmap("jet")(np.arange(256))[:, :3][heatmap_uint8]
+                        jet_heatmap = matplotlib.colormaps["jet"](np.arange(256))[:, :3][heatmap_uint8]
                         super_img = np.clip(jet_heatmap * 0.4 + img_resized / 255.0, 0, 1)
                         col1, col2 = st.columns(2)
                         col1.image(img_resized, caption="Extracted Frame")
