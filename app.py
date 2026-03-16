@@ -9,6 +9,19 @@ st.set_page_config(page_title="Deepfake Detector XAI", layout="wide")
 st.title("🔍 Deepfake Detection with XAI")
 st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_allow_html=True)
 
+# ── Patch InputLayer to accept legacy 'batch_shape' keyword ──────────────────
+class LegacyInputLayer(tf.keras.layers.InputLayer):
+    def __init__(self, **kwargs):
+        if 'batch_shape' in kwargs:
+            kwargs['input_shape'] = kwargs.pop('batch_shape')[1:]  # strip batch dim
+        super().__init__(**kwargs)
+
+    @classmethod
+    def from_config(cls, config):
+        if 'batch_shape' in config:
+            config['input_shape'] = config.pop('batch_shape')[1:]
+        return cls(**config)
+
 @st.cache_resource
 def load_forensic_model():
     base_path = os.path.dirname(os.path.abspath(__file__))
@@ -20,39 +33,38 @@ def load_forensic_model():
         return None
 
     try:
-        # Step 1: Load raw model with safe_mode disabled to bypass config errors
-        raw = tf.keras.models.load_model(model_path, compile=False)
-        
-        # Step 2: Find the MobileNetV2 backbone
+        raw = tf.keras.models.load_model(
+            model_path,
+            compile=False,
+            custom_objects={'InputLayer': LegacyInputLayer}
+        )
+
+        # Find MobileNetV2 backbone
         backbone = None
         for layer in raw.layers:
             if 'mobilenet' in layer.name.lower():
                 backbone = layer
                 break
         if backbone is None:
-            st.error("Could not find MobileNetV2 backbone in model.")
+            st.error("MobileNetV2 backbone not found.")
             return None
 
-        # Step 3: Build a clean functional model around the backbone
-        # This handles the dual-tensor output issue properly
+        # Build clean functional model — handles dual-tensor backbone output
         inputs = tf.keras.Input(shape=(224, 224, 3))
-        
-        # Call the backbone and handle list outputs
-        backbone_out = backbone(inputs)
+        backbone_out = backbone(inputs, training=False)
+
         if isinstance(backbone_out, (list, tuple)):
-            # Average the duplicate tensors
             x = tf.keras.layers.Average()(list(backbone_out))
         else:
             x = backbone_out
-        
-        # Pool spatial dimensions
-        x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        
-        # Final classification head
+
+        if len(x.shape) == 4:
+            x = tf.keras.layers.GlobalAveragePooling2D()(x)
+
         outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
 
-        # Step 4: Copy weights from original Dense layer
+        # Copy Dense weights from original model
         for layer in reversed(raw.layers):
             if isinstance(layer, tf.keras.layers.Dense):
                 try:
@@ -114,9 +126,9 @@ if uploaded_file is not None:
 
     if st.button("Generate Forensic Report", type="primary"):
         if model is None:
-            st.error("Model not loaded. Cannot run analysis.")
+            st.error("Model not loaded.")
         else:
-            with st.spinner('Analyzing...'):
+            with st.spinner("Analyzing..."):
                 cap = cv2.VideoCapture(temp_path)
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames // 2)
@@ -128,7 +140,7 @@ if uploaded_file is not None:
                 else:
                     img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     img_resized = cv2.resize(img_rgb, (224, 224))
-                    img_array = np.expand_dims(img_resized, axis=0).astype('float32') / 255.0
+                    img_array = np.expand_dims(img_resized, axis=0).astype("float32") / 255.0
 
                     preds = model.predict(img_array, verbose=0)
                     prediction = float(preds[0][0])
@@ -137,20 +149,19 @@ if uploaded_file is not None:
                     conf = (1 - prediction) * 100 if prediction < 0.5 else prediction * 100
 
                     st.divider()
-                    col_verdict, col_conf = st.columns(2)
-                    col_verdict.metric("Verdict", label)
-                    col_conf.metric("Confidence", f"{conf:.2f}%")
+                    c1, c2 = st.columns(2)
+                    c1.metric("Verdict", label)
+                    c2.metric("Confidence", f"{conf:.2f}%")
 
                     heatmap = get_gradcam_heatmap(img_array, model)
                     if heatmap is not None:
                         heatmap_resized = cv2.resize(heatmap, (224, 224))
                         heatmap_uint8 = np.uint8(255 * heatmap_resized)
-                        color_map = cm.get_cmap("jet")
-                        jet_heatmap = color_map(np.arange(256))[:, :3][heatmap_uint8]
-                        super_img = np.clip(jet_heatmap * 0.4 + (img_resized / 255.0), 0, 1)
-
-                        c1, c2 = st.columns(2)
-                        c1.image(img_resized, caption="Extracted Frame")
-                        c2.image(super_img, caption="Grad-CAM XAI Map")
+                        jet_heatmap = cm.get_cmap("jet")(np.arange(256))[:, :3][heatmap_uint8]
+                        super_img = np.clip(jet_heatmap * 0.4 + img_resized / 255.0, 0, 1)
+                        col1, col2 = st.columns(2)
+                        col1.image(img_resized, caption="Extracted Frame")
+                        col2.image(super_img, caption="Grad-CAM XAI Map")
                     else:
                         st.image(img_resized, caption="Extracted Frame (Grad-CAM unavailable)")
+
