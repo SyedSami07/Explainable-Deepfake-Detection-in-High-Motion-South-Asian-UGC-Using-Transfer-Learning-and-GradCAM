@@ -7,17 +7,21 @@ import os
 import zipfile
 import tempfile
 
+
 st.set_page_config(
     page_title="DeepMotion — South Asian Deepfake Detection",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap');
 
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
 
 html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
     background: #060609 !important;
@@ -25,10 +29,13 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
     font-family: 'Syne', sans-serif !important;
 }
 
+
 #MainMenu, footer, header, [data-testid="stToolbar"],
 [data-testid="stDecoration"], [data-testid="stStatusWidget"] { display: none !important; }
 
+
 section[data-testid="stSidebar"] { display: none !important; }
+
 
 .block-container {
     padding: 0 !important;
@@ -36,6 +43,7 @@ section[data-testid="stSidebar"] { display: none !important; }
     width: 100% !important;
 }
 [data-testid="stMain"] > div { padding: 0 !important; }
+
 
 [data-testid="stAppViewContainer"]::before {
     content: ''; position: fixed; inset: 0; z-index: 0;
@@ -47,6 +55,7 @@ section[data-testid="stSidebar"] { display: none !important; }
     pointer-events: none;
 }
 
+
 [data-testid="stAppViewContainer"]::after {
     content: ''; position: fixed; inset: 0; z-index: 1;
     background: repeating-linear-gradient(
@@ -56,6 +65,7 @@ section[data-testid="stSidebar"] { display: none !important; }
     pointer-events: none;
 }
 
+
 [data-testid="stVerticalBlock"],
 [data-testid="stHorizontalBlock"],
 .stMarkdown, .stButton,
@@ -64,6 +74,7 @@ section[data-testid="stSidebar"] { display: none !important; }
 .stImage, .stSpinner, .stAlert {
     position: relative; z-index: 2;
 }
+
 
 .hero-badge {
     display: inline-flex; align-items: center; gap: 8px;
@@ -97,12 +108,13 @@ section[data-testid="stSidebar"] { display: none !important; }
 }
 @keyframes orbFloat {
     0%,100% { transform: translateY(0); }
-    50%      { transform: translateY(-14px); }
+    50%     { transform: translateY(-14px); }
 }
 @keyframes orbGlow {
     0%,100% { box-shadow: 0 0 36px rgba(124,58,237,0.5), 0 0 70px rgba(124,58,237,0.15); }
-    50%      { box-shadow: 0 0 56px rgba(124,58,237,0.85), 0 0 110px rgba(124,58,237,0.35); }
+    50%     { box-shadow: 0 0 56px rgba(124,58,237,0.85), 0 0 110px rgba(124,58,237,0.35); }
 }
+
 
 [data-testid="stFileUploader"] {
     background: rgba(12,6,34,0.75) !important;
@@ -117,10 +129,11 @@ section[data-testid="stSidebar"] { display: none !important; }
 }
 [data-testid="stFileUploader"] label,
 [data-testid="stFileUploaderDropzoneInstructions"] {
-    color: rgba(180,165,220,0.55) !important;
+    color: rgba(255,255,255,0.85) !important;
     font-family: 'Space Mono', monospace !important;
     font-size: 12px !important;
 }
+
 
 [data-testid="stVideo"] {
     max-width: 480px !important;
@@ -132,6 +145,7 @@ section[data-testid="stSidebar"] { display: none !important; }
     box-shadow: 0 16px 50px rgba(0,0,0,0.65), 0 0 32px rgba(99,31,255,0.09) !important;
 }
 video { max-height: 300px !important; border-radius: 18px !important; }
+
 
 [data-testid="stButton"] > button {
     background: linear-gradient(135deg, #7c3aed, #4c1db5) !important;
@@ -150,6 +164,7 @@ video { max-height: 300px !important; border-radius: 18px !important; }
     background: linear-gradient(135deg, #8b5cf6, #6d28d9) !important;
 }
 
+
 [data-testid="stImage"] img {
     border-radius: 14px !important;
     border: 1px solid rgba(99,31,255,0.18) !important;
@@ -159,12 +174,14 @@ video { max-height: 300px !important; border-radius: 18px !important; }
 .stImage p {
     font-family: 'Space Mono', monospace !important;
     font-size: 10px !important; letter-spacing: 2px !important;
-    color: rgba(150,130,200,0.45) !important;
+    color: rgba(255,255,255,0.75) !important;
     text-align: center !important; margin-top: 8px !important;
     text-transform: uppercase !important;
 }
 
+
 .stSpinner > div { border-color: #7c3aed transparent transparent transparent !important; }
+
 
 .stAlert {
     background: rgba(12,6,34,0.7) !important;
@@ -174,6 +191,12 @@ video { max-height: 300px !important; border-radius: 18px !important; }
     font-size: 12px !important; color: rgba(190,175,235,0.8) !important;
 }
 
+
+.light-text {
+    color: rgba(255,255,255,0.45) !important;
+}
+
+
 hr {
     border: none !important;
     border-top: 1px solid rgba(99,31,255,0.15) !important;
@@ -181,6 +204,7 @@ hr {
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def get_model_path():
@@ -190,6 +214,7 @@ def get_model_path():
         if os.path.exists(p):
             return p
     return None
+
 
 @st.cache_resource
 def load_forensic_model():
@@ -216,6 +241,7 @@ def load_forensic_model():
     except Exception as e:
         return None, str(e)
 
+
 def get_gradcam_heatmap(img_array, model):
     try:
         base      = model.layers[1]
@@ -227,13 +253,14 @@ def get_gradcam_heatmap(img_array, model):
             if isinstance(preds,(list,tuple)): preds = preds[0]
             loss = preds[:,0]
         grads = tape.gradient(loss, co)
-        pg    = tf.reduce_mean(grads, axis=(0,1,2))
-        hm    = co[0] @ pg[..., tf.newaxis]
-        hm    = tf.squeeze(hm)
-        hm    = tf.maximum(hm,0)/(tf.math.reduce_max(hm)+1e-10)
+        pg     = tf.reduce_mean(grads, axis=(0,1,2))
+        hm     = co[0] @ pg[..., tf.newaxis]
+        hm     = tf.squeeze(hm)
+        hm     = tf.maximum(hm,0)/(tf.math.reduce_max(hm)+1e-10)
         return hm.numpy()
     except Exception:
         return None
+
 
 def build_explanation(is_fake, conf, hm_available):
     if is_fake:
@@ -260,8 +287,10 @@ def build_explanation(is_fake, conf, hm_available):
         grad_note = "The <b>Grad-CAM heatmap</b> shows which regions reinforced the authenticity verdict." if hm_available else ""
     return intro, sub, indicators, grad_note
 
+
 # ── Load model ────────────────────────────────────────────────────────────────
 model, model_err = load_forensic_model()
+
 
 # ── HERO ─────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -278,26 +307,28 @@ st.markdown("""
     margin-bottom:16px;animation:fadeDown 0.7s 0.1s ease both;
     opacity:0;animation-fill-mode:both;
   ">DeepMotion</div>
-  <div style="font-family:'Space Mono',monospace;font-size:11px;
-      color:rgba(180,165,220,0.45);letter-spacing:2px;
+  <div class="light-text" style="font-family:'Space Mono',monospace;font-size:11px;
+      letter-spacing:2px;
       animation:fadeDown 0.7s 0.2s ease both;opacity:0;animation-fill-mode:both;">
-    EXPLAINABLE DEEPFAKE DETECTION &nbsp;·&nbsp; GRAD-CAM VISUALIZATION &nbsp;·&nbsp; by Sami
+    EXPLAINABLE DEEPFAKE DETECTION &nbsp;·&nbsp; SOUTH ASIAN CONTINENT &nbsp;·&nbsp; by Syed Salman Sami
   </div>
 </div>
 """, unsafe_allow_html=True)
+
 
 # ── UPLOAD ────────────────────────────────────────────────────────────────────
 _, mid, _ = st.columns([1, 3, 1])
 with mid:
     st.markdown("""
-    <div style="font-family:'Space Mono',monospace;font-size:10px;
+    <div class="light-text" style="font-family:'Space Mono',monospace;font-size:10px;
         letter-spacing:3px;text-transform:uppercase;
-        color:rgba(167,139,250,0.5);margin-bottom:10px;">
+        margin-bottom:10px;">
       📁 &nbsp; Drop your video file
     </div>
     """, unsafe_allow_html=True)
     uploaded_file = st.file_uploader("", type=["mp4","avi","mov"],
-                                     label_visibility="collapsed")
+                                      label_visibility="collapsed")
+
 
 # ── MAIN FLOW ─────────────────────────────────────────────────────────────────
 if uploaded_file is not None:
@@ -305,14 +336,17 @@ if uploaded_file is not None:
     with open(temp_path,"wb") as f:
         f.write(uploaded_file.getbuffer())
 
+
     _, vc, _ = st.columns([1, 2, 1])
     with vc:
         st.video(temp_path)
+
 
     _, bc, _ = st.columns([1, 2, 1])
     with bc:
         run = st.button("⟡  Run Forensic Analysis", type="primary",
                         use_container_width=True)
+
 
     if run:
         if model is None:
@@ -327,6 +361,7 @@ if uploaded_file is not None:
                     ret, frame = cap.read()
                     cap.release()
 
+
             if not ret:
                 st.error("Frame extraction failed.")
             else:
@@ -334,19 +369,23 @@ if uploaded_file is not None:
                 img_resized = cv2.resize(img_rgb, (224,224))
                 img_array   = np.expand_dims(img_resized,0).astype("float32")/255.0
 
-                preds      = model.predict(img_array, verbose=0)
+
+                preds       = model.predict(img_array, verbose=0)
                 prediction = float(preds[0][0])
-                is_fake    = prediction < 0.5
-                label      = "AI DEEPFAKE" if is_fake else "AUTHENTIC"
-                conf       = (1-prediction)*100 if is_fake else prediction*100
-                accent     = "#f87171" if is_fake else "#34d399"
-                icon       = "⚠" if is_fake else "✓"
+                is_fake     = prediction < 0.5
+                label       = "AI DEEPFAKE" if is_fake else "AUTHENTIC"
+                conf        = (1-prediction)*100 if is_fake else prediction*100
+                accent      = "#f87171" if is_fake else "#34d399"
+                icon        = "⚠" if is_fake else "✓"
+
 
                 heatmap      = get_gradcam_heatmap(img_array, model)
                 hm_available = heatmap is not None
                 intro, sub, indicators, grad_note = build_explanation(is_fake, conf, hm_available)
 
+
                 st.markdown("<hr>", unsafe_allow_html=True)
+
 
                 # ── Verdict card ──────────────────────────────────────────────
                 _, vc2, _ = st.columns([0.5, 5, 0.5])
@@ -366,9 +405,9 @@ if uploaded_file is not None:
                       <div style="position:absolute;top:0;left:0;right:0;height:2px;
                           background:linear-gradient(90deg,transparent,{accent}70,transparent);"></div>
                       <div>
-                        <div style="font-family:'Space Mono',monospace;font-size:10px;
+                        <div class="light-text" style="font-family:'Space Mono',monospace;font-size:10px;
                             letter-spacing:3px;text-transform:uppercase;
-                            color:rgba(190,175,235,0.45);margin-bottom:10px;">
+                            margin-bottom:10px;">
                           FORENSIC VERDICT
                         </div>
                         <div style="font-family:'Syne',sans-serif;
@@ -378,9 +417,9 @@ if uploaded_file is not None:
                         </div>
                       </div>
                       <div style="text-align:right;flex-shrink:0;">
-                        <div style="font-family:'Space Mono',monospace;font-size:10px;
+                        <div class="light-text" style="font-family:'Space Mono',monospace;font-size:10px;
                             letter-spacing:3px;text-transform:uppercase;
-                            color:rgba(190,175,235,0.45);margin-bottom:10px;">
+                            margin-bottom:10px;">
                           CONFIDENCE
                         </div>
                         <div style="font-family:'Syne',sans-serif;
@@ -392,14 +431,15 @@ if uploaded_file is not None:
                     </div>
                     """, unsafe_allow_html=True)
 
+
                 # ── Confidence bar ────────────────────────────────────────────
                 _, bc2, _ = st.columns([0.5, 5, 0.5])
                 with bc2:
                     st.markdown(f"""
                     <div style="margin:14px 0 30px;">
-                      <div style="display:flex;justify-content:space-between;
+                      <div class="light-text" style="display:flex;justify-content:space-between;
                           font-family:'Space Mono',monospace;font-size:10px;
-                          color:rgba(167,139,250,0.35);letter-spacing:1px;margin-bottom:8px;">
+                          letter-spacing:1px;margin-bottom:8px;">
                         <span>CERTAINTY SCALE</span><span>{conf:.1f}%</span>
                       </div>
                       <div style="background:rgba(255,255,255,0.06);border-radius:100px;
@@ -410,6 +450,7 @@ if uploaded_file is not None:
                       </div>
                     </div>
                     """, unsafe_allow_html=True)
+
 
                 # ── EXPLANATION ───────────────────────────────────────────────
                 indicator_html = "".join([f"""
@@ -428,11 +469,13 @@ if uploaded_file is not None:
                   </div>
                 </div>""" for t,d in indicators])
 
-                grad_html = f"""<div style="margin-top:16px;padding:14px 16px;border-radius:12px;
+
+                grad_html = f"""<div class="light-text" style="margin-top:16px;padding:14px 16px;border-radius:12px;
                     background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.15);
                     font-family:'Space Mono',monospace;font-size:11px;
-                    color:rgba(167,139,250,0.6);line-height:1.6;">{grad_note}</div>""" \
+                    line-height:1.6;">{grad_note}</div>""" \
                     if grad_note else ""
+
 
                 _, ec, _ = st.columns([0.5, 5, 0.5])
                 with ec:
@@ -447,28 +490,30 @@ if uploaded_file is not None:
                     ">
                       <div style="position:absolute;top:0;left:0;right:0;height:2px;
                           background:linear-gradient(90deg,transparent,rgba(124,58,237,0.5),transparent);"></div>
-                      <div style="font-family:'Space Mono',monospace;font-size:10px;
+                      <div class="light-text" style="font-family:'Space Mono',monospace;font-size:10px;
                           letter-spacing:3px;text-transform:uppercase;
-                          color:rgba(167,139,250,0.4);margin-bottom:18px;">
+                          margin-bottom:18px;">
                         ◈ &nbsp; WHY THIS VERDICT?
                       </div>
                       <p style="font-size:15px;line-height:1.7;
                           color:rgba(215,205,245,0.85);margin-bottom:18px;">{intro}</p>
-                      <p style="font-family:'Space Mono',monospace;font-size:11px;
-                          color:rgba(155,140,200,0.5);line-height:1.6;margin-bottom:14px;">{sub}</p>
+                      <p class="light-text" style="font-family:'Space Mono',monospace;font-size:11px;
+                          line-height:1.6;margin-bottom:14px;">{sub}</p>
                       {indicator_html}
                       {grad_html}
                     </div>
                     """, unsafe_allow_html=True)
 
+
                 # ── Grad-CAM visuals ──────────────────────────────────────────
                 st.markdown("""
-                <div style="text-align:center;font-family:'Space Mono',monospace;
+                <div class="light-text" style="text-align:center;font-family:'Space Mono',monospace;
                     font-size:10px;letter-spacing:3px;text-transform:uppercase;
-                    color:rgba(130,110,180,0.35);margin-bottom:16px;">
-                  ◈ &nbsp; XAI Visual Forensics &nbsp; ◈
+                    margin-bottom:16px;">
+                 ◈ &nbsp; XAI Visual Forensics &nbsp; ◈
                 </div>
                 """, unsafe_allow_html=True)
+
 
                 _, ic, _ = st.columns([0.5, 5, 0.5])
                 with ic:
@@ -486,29 +531,32 @@ if uploaded_file is not None:
                         st.image(img_resized, caption="EXTRACTED FRAME",
                                  use_container_width=True)
 
+
                 st.markdown("<div style='height:52px;'></div>", unsafe_allow_html=True)
+
 
 else:
     st.markdown("""
-    <div style="text-align:center;padding:16px 0 72px;
+    <div class="light-text" style="text-align:center;padding:16px 0 72px;
         animation:fadeUp 0.8s 0.35s ease both;opacity:0;animation-fill-mode:both;">
       <div style="width:110px;height:110px;margin:0 auto 22px;border-radius:50%;
-          background:radial-gradient(circle at 35% 35%,rgba(167,139,250,0.22),rgba(99,31,255,0.07),transparent);
-          border:1px solid rgba(99,31,255,0.16);
-          display:flex;align-items:center;justify-content:center;font-size:44px;
-          animation:orbFloat 4s ease-in-out infinite,orbGlow 4s ease-in-out infinite;">🔍</div>
+         background:radial-gradient(circle at 35% 35%,rgba(167,139,250,0.22),rgba(99,31,255,0.07),transparent);
+         border:1px solid rgba(99,31,255,0.16);
+         display:flex;align-items:center;justify-content:center;font-size:44px;
+         animation:orbFloat 4s ease-in-out infinite,orbGlow 4s ease-in-out infinite;">🔍</div>
       <div style="font-family:'Space Mono',monospace;font-size:11px;
-          color:rgba(140,120,190,0.32);letter-spacing:2.5px;">
+         letter-spacing:2.5px;">
         UPLOAD A VIDEO TO BEGIN ANALYSIS
       </div>
     </div>
     """, unsafe_allow_html=True)
 
+
 # ── Minimal footer ────────────────────────────────────────────────────────────
 st.markdown("""
-<div style="text-align:center;padding:24px 0 20px;
+<div class="light-text" style="text-align:center;padding:24px 0 20px;
     font-family:'Space Mono',monospace;font-size:10px;
-    color:rgba(90,70,150,0.22);letter-spacing:3px;">
+    letter-spacing:3px;">
   DeepMotion &nbsp;·&nbsp; BY SAMI
 </div>
 """, unsafe_allow_html=True)
