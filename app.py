@@ -25,11 +25,14 @@ st.write("<p style='text-align: center;'>Forensic Tool - by Sami</p>", unsafe_al
 def load_and_fix_model():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(current_dir, "models", "MobileNetV2_best.keras")
+    
+    # Fallback to .h5 if .keras isn't found
     if not os.path.exists(model_path):
         model_path = os.path.join(current_dir, "models", "MobileNetV2_best.h5")
 
     if os.path.exists(model_path):
         try:
+            # Compatibility interceptor for batch_shape
             def fixed_input_layer(**kwargs):
                 if 'batch_shape' in kwargs:
                     kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
@@ -37,18 +40,13 @@ def load_and_fix_model():
 
             orig_model = tf.keras.models.load_model(
                 model_path, 
-                compile=False,
+                compile=False, 
                 custom_objects={'InputLayer': fixed_input_layer}
             )
             
-            base_net = None
-            for layer in orig_model.layers:
-                if 'mobilenet' in layer.name.lower():
-                    base_net = layer
-                    break
-            if not base_net:
-                base_net = orig_model.layers[0]
-                
+            # Reconstruct for classification
+            base_net = orig_model.layers[0] if 'mobilenet' in orig_model.layers[0].name.lower() else orig_model.layers[1]
+            
             new_model = tf.keras.Sequential([
                 base_net,
                 tf.keras.layers.GlobalAveragePooling2D(),
@@ -58,9 +56,7 @@ def load_and_fix_model():
         except Exception as e:
             st.error(f"Error loading model: {e}")
             return None, None
-    else:
-        st.error(f"Model file not found. Please ensure it is in the 'models' folder.")
-        return None, None
+    return None, None
 
 model, original_loaded_model = load_and_fix_model()
 
